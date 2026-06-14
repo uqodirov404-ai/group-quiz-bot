@@ -91,14 +91,15 @@ def is_questions_empty():
     conn.close()
     return count == 0
 
-def import_excel_to_db():
-    print("Excel faylidan savollarni bazaga import qilish boshlandi...")
-    if not os.path.exists(EXCEL_PATH):
-        logger.error(f"Excel fayli topilmadi: {EXCEL_PATH}")
-        return
+def import_excel_to_db(custom_path=None):
+    path_to_use = custom_path if custom_path else EXCEL_PATH
+    print(f"Excel faylidan savollarni bazaga import qilish boshlandi: {path_to_use}")
+    if not os.path.exists(path_to_use):
+        logger.error(f"Excel fayli topilmadi: {path_to_use}")
+        return 0
         
     try:
-        wb = openpyxl.load_workbook(EXCEL_PATH, data_only=True)
+        wb = openpyxl.load_workbook(path_to_use, data_only=True)
         sheet = wb.active
         
         current_topic = None
@@ -152,9 +153,34 @@ def import_excel_to_db():
             conn.commit()
             conn.close()
             print(f"Muvaffaqiyatli yuklandi: {len(questions_to_insert)} ta savol.")
+            return len(questions_to_insert)
+        return 0
     except Exception as e:
         logger.error(f"Excel importda xatolik: {e}")
         print(f"Xatolik yuz berdi: {e}")
+        return 0
+
+def insert_questions(questions_list):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM questions")
+    
+    questions_to_insert = []
+    for idx, q in enumerate(questions_list, 1):
+        questions_to_insert.append((
+            q.get('topic') or "Umumiy adabiyot",
+            idx,
+            q['question_text'].strip(),
+            q['answer_text'].strip()
+        ))
+        
+    cursor.executemany('''
+        INSERT INTO questions (topic, question_num, question_text, answer_text)
+        VALUES (?, ?, ?, ?)
+    ''', questions_to_insert)
+    conn.commit()
+    conn.close()
+    return len(questions_to_insert)
 
 # Groups helpers
 def save_group(group_id: int, title: str, status='pending'):
