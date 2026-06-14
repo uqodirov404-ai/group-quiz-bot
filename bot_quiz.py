@@ -503,7 +503,7 @@ async def run_quiz_game(context: ContextTypes.DEFAULT_TYPE, group_id: int, quest
             
             # Grade all replies asynchronously
             options = parse_options(q['question_text'])
-            for uid, r_info in replies.items():
+            for uid, r_info in list(replies.items()):
                 if options:
                     correct_idx = get_correct_option_index(q['answer_text'], options)
                     correct_letter = options[correct_idx][0]
