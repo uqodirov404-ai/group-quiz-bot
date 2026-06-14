@@ -302,10 +302,14 @@ async def natija_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_correct = context.chat_data.get(f"user_{uid}_correct", [])
             user_mistakes = [q_num for q_num in asked_questions if q_num not in user_correct]
             if user_mistakes:
-                mistakes_str = ", ".join(f"{m}-savol" for m in user_mistakes)
+                if len(user_mistakes) <= 10:
+                    mistakes_str = ", ".join(f"{m}-savol" for m in user_mistakes)
+                else:
+                    mistakes_str = f"{len(user_mistakes)} ta"
                 stats_text += f"{rank}. {user_mention} — **{s['score']} ball** (Xatolar: {mistakes_str})\n"
             else:
                 stats_text += f"{rank}. {user_mention} — **{s['score']} ball** (Xatolar: yo'q)\n"
+
     else:
         stats_text = "Hech kim ball to'play olmadi."
         
@@ -597,14 +601,19 @@ async def run_quiz_game(context: ContextTypes.DEFAULT_TYPE, group_id: int, quest
             if s['username']:
                 user_mention = f"@{s['username']}"
                 
+            # Get mistakes for this user
             uid = s['user_id']
             user_correct = context.chat_data.get(f"user_{uid}_correct", [])
             user_mistakes = [q_num for q_num in asked_questions if q_num not in user_correct]
             if user_mistakes:
-                mistakes_str = ", ".join(f"{m}-savol" for m in user_mistakes)
+                if len(user_mistakes) <= 10:
+                    mistakes_str = ", ".join(f"{m}-savol" for m in user_mistakes)
+                else:
+                    mistakes_str = f"{len(user_mistakes)} ta"
                 stats_text += f"{rank}. {user_mention} — **{s['score']} ball** (Xatolar: {mistakes_str})\n"
             else:
                 stats_text += f"{rank}. {user_mention} — **{s['score']} ball** (Xatolar: yo'q)\n"
+
     else:
         stats_text = (
             f"🏁 **O'yin yakunlandi!**\n\n"
