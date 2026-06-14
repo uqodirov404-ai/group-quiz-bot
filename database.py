@@ -70,6 +70,12 @@ def init_db():
         )
     ''')
     
+    # Pre-approve the test group ID to persist across ephemeral container restarts
+    cursor.execute('''
+        INSERT OR IGNORE INTO groups (group_id, title, status, approved_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+    ''', (-1003642185233, "Test Group", "approved"))
+    
     conn.commit()
     conn.close()
     
