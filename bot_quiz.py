@@ -204,6 +204,29 @@ async def list_groups(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None
     )
 
+async def render_admin_groups_list(query):
+    groups = db.get_all_groups()
+    if not groups:
+        await query.edit_message_text("Hozircha hech qanday guruh ro'yxatdan o'tmagan.")
+        return
+        
+    text = "📋 **Guruhlar ro'yxati:**\n\n"
+    keyboard = []
+    for g in groups:
+        status_emoji = "⏳" if g['status'] == 'pending' else "✅" if g['status'] == 'approved' else "❌" if g['status'] == 'rejected' else "📴"
+        text += f"{status_emoji} **{g['title']}**\nID: `{g['group_id']}`\nHolati: `{g['status']}`\n\n"
+        
+        if g['status'] == 'approved':
+            keyboard.append([InlineKeyboardButton(f"🚫 {g['title'][:20]} o'chirish", callback_data=f"adm_disable_{g['group_id']}")])
+        else:
+            keyboard.append([InlineKeyboardButton(f"✅ {g['title'][:20]} faollashtirish", callback_data=f"adm_approve_{g['group_id']}")])
+            
+    await query.edit_message_text(
+        text, 
+        parse_mode="Markdown", 
+        reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None
+    )
+
 # /test command in groups
 async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
@@ -363,17 +386,33 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("adm_approve_"):
         grp_id = int(data.split("_")[2])
         db.update_group_status(grp_id, 'approved')
-        await query.message.reply_text(f"Guruh faollashtirildi: `{grp_id}`")
+        # Notify the group chat
+        try:
+            await context.bot.send_message(
+                chat_id=grp_id,
+                text="🎉 **Bot egasi guruhda botdan foydalanishga ruxsat berdi!**\nGuruh adminlari `/test` orqali o'yinni boshlashlari mumkin."
+            )
+        except Exception as e:
+            logger.error(f"Error notifying group {grp_id} on approval: {e}")
+        await query.answer("Guruh faollashtirildi")
         # Refresh group list
-        await list_groups(update, context)
+        await render_admin_groups_list(query)
         return
         
     elif data.startswith("adm_disable_"):
         grp_id = int(data.split("_")[2])
         db.update_group_status(grp_id, 'disabled')
-        await query.message.reply_text(f"Guruh o'chirib qo'yildi: `{grp_id}`")
+        # Notify the group chat
+        try:
+            await context.bot.send_message(
+                chat_id=grp_id,
+                text="❌ **Guruh uchun bot faoliyati o'chirib qo'yildi.**"
+            )
+        except Exception as e:
+            logger.error(f"Error notifying group {grp_id} on disable: {e}")
+        await query.answer("Guruh o'chirib qo'yildi")
         # Refresh group list
-        await list_groups(update, context)
+        await render_admin_groups_list(query)
         return
         
     # 3. Topic selection pagination
