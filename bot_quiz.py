@@ -416,7 +416,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.clear_scores(chat_id)
         
         # Clear inline selection text
-        await query.edit_message_text(f"🎮 **O'yin boshlanmoqda!** \nMavzu: *{topic}*\nSavollar oralig'i: *{interval} soniya*", parse_mode="Markdown")
+        start_text = (
+            f"🎮 **O'yin boshlanmoqda!**\n"
+            f"Mavzu: *{topic}*\n"
+            f"Savollar oralig'i: *{interval} soniya*\n"
+            f"✍️ Test mualliflari: *Shaxzod Karimov va Zulfizar Ziyodullayeva*"
+        )
+        await query.edit_message_text(start_text, parse_mode="Markdown")
         
         # Start game task
         asyncio.create_task(run_quiz_game(context, chat_id, questions, interval, thread_id))
