@@ -232,6 +232,7 @@ async def natija_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         stats_text = (
             f"🏆 **Natijalar (Mavzu: {active['topic']}):**\n\n"
         )
+        asked_questions = context.chat_data.get("asked_questions", [])
         for rank, s in enumerate(scores, 1):
             user_mention = s['first_name']
             if s['username']:
@@ -239,7 +240,8 @@ async def natija_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
             # Get mistakes for this user
             uid = s['user_id']
-            user_mistakes = context.chat_data.get(f"user_{uid}_mistakes", [])
+            user_correct = context.chat_data.get(f"user_{uid}_correct", [])
+            user_mistakes = [q_num for q_num in asked_questions if q_num not in user_correct]
             if user_mistakes:
                 mistakes_str = ", ".join(f"{m}-savol" for m in user_mistakes)
                 stats_text += f"{rank}. {user_mention} — **{s['score']} ball** (Xatolar: {mistakes_str})\n"
@@ -386,6 +388,9 @@ async def run_quiz_game(context: ContextTypes.DEFAULT_TYPE, group_id: int, quest
             msg = await context.bot.send_message(chat_id=group_id, text=text, message_thread_id=thread_id)
             # Save question index and msg id to database
             db.update_quiz_question(group_id, idx, msg.message_id)
+            # Record that this question was asked (1-based index)
+            asked_questions = context.chat_data.setdefault("asked_questions", [])
+            asked_questions.append(idx + 1)
         except Exception as e:
             logger.error(f"Failed to send question to group {group_id}: {e}")
             db.end_quiz(group_id)
@@ -415,10 +420,9 @@ async def run_quiz_game(context: ContextTypes.DEFAULT_TYPE, group_id: int, quest
                 )
                 if is_correct:
                     db.add_score(group_id, uid, r_info['first_name'], r_info['username'])
-                else:
-                    # Record user's mistake (1-based question number)
-                    user_mistakes = context.chat_data.setdefault(f"user_{uid}_mistakes", [])
-                    user_mistakes.append(idx + 1)
+                    # Record user's correct answer (1-based index)
+                    user_correct = context.chat_data.setdefault(f"user_{uid}_correct", [])
+                    user_correct.append(idx + 1)
                     
         time_up_text = (
             f"⏰ **Vaqt tugadi!**\n\n"
@@ -452,13 +456,15 @@ async def run_quiz_game(context: ContextTypes.DEFAULT_TYPE, group_id: int, quest
             f"📚 **Mavzu:** {questions[0]['topic']}\n\n"
             f"📊 **Natijalar (Reyting):**\n"
         )
+        asked_questions = context.chat_data.get("asked_questions", [])
         for rank, s in enumerate(scores, 1):
             user_mention = s['first_name']
             if s['username']:
                 user_mention = f"@{s['username']}"
                 
             uid = s['user_id']
-            user_mistakes = context.chat_data.get(f"user_{uid}_mistakes", [])
+            user_correct = context.chat_data.get(f"user_{uid}_correct", [])
+            user_mistakes = [q_num for q_num in asked_questions if q_num not in user_correct]
             if user_mistakes:
                 mistakes_str = ", ".join(f"{m}-savol" for m in user_mistakes)
                 stats_text += f"{rank}. {user_mention} — **{s['score']} ball** (Xatolar: {mistakes_str})\n"
