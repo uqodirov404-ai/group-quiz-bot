@@ -378,8 +378,7 @@ async def run_quiz_game(context: ContextTypes.DEFAULT_TYPE, group_id: int, quest
             
         # Send question
         text = (
-            f"📖 **O'yin:** {idx+1}/{len(questions)}-savol\n"
-            f"📚 **Mavzu:** {q['topic']}\n\n"
+            f"📖 **O'yin:** {idx+1}/{len(questions)}-savol\n\n"
             f"❓ **SAVOL:**\n{q['question_text']}\n\n"
             f"💬 *Javob berish uchun ushbu xabarga javob (reply) yuboring!*"
         )
