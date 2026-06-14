@@ -114,7 +114,7 @@ async def my_chat_member_handler(update: Update, context: ContextTypes.DEFAULT_T
                 f"🤖 **Salom! Men guruh savol-javob botiman.**\n\n"
                 f"Ushbu guruhda botdan foydalanish uchun bot egasining tasdig'i kutilmoqda.\n"
                 f"Raqamli so'rov yuborildi. Iltimos, bot egasi ruxsat berishini kuting.\n"
-                f"Guruh admini bot egasi bilan bog'lanishi mumkin."
+                f"Guruh admini bot dasturchisi bilan bog'lanishi uchun: @Umidjon_Qodirov"
             )
         )
         
@@ -180,7 +180,7 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Check if group is approved
     grp = db.get_group(chat.id)
     if not grp or grp['status'] != 'approved':
-        await update.message.reply_text("❌ Guruh uchun bot faollashtirilmagan yoki o'chirib qo'yilgan. Iltimos bot egasiga murojaat qiling.")
+        await update.message.reply_text("❌ Guruh uchun bot faollashtirilmagan yoki o'chirib qo'yilgan. Guruh admini bot dasturchisi bilan bog'lanishi mumkin: @Umidjon_Qodirov")
         return
         
     # Check if user is admin
