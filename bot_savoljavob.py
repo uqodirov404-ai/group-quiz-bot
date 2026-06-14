@@ -17,7 +17,7 @@ import asyncio
 import threading
 from datetime import datetime
 
-from flask import Flask
+# flask import removed
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
     Application,
