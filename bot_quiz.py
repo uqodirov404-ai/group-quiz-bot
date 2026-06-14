@@ -236,7 +236,15 @@ async def natija_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_mention = s['first_name']
             if s['username']:
                 user_mention = f"@{s['username']}"
-            stats_text += f"{rank}. {user_mention} — **{s['score']} ball**\n"
+                
+            # Get mistakes for this user
+            uid = s['user_id']
+            user_mistakes = context.chat_data.get(f"user_{uid}_mistakes", [])
+            if user_mistakes:
+                mistakes_str = ", ".join(f"{m}-savol" for m in user_mistakes)
+                stats_text += f"{rank}. {user_mention} — **{s['score']} ball** (Xatolar: {mistakes_str})\n"
+            else:
+                stats_text += f"{rank}. {user_mention} — **{s['score']} ball** (Xatolar: yo'q)\n"
     else:
         stats_text = "Hech kim ball to'play olmadi."
         
@@ -356,7 +364,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Active Quiz Game loop
 async def run_quiz_game(context: ContextTypes.DEFAULT_TYPE, group_id: int, questions: list, interval_seconds: int, thread_id: int = None):
-    # Clear local chat_data winner states
+    # Clear local chat_data states
     context.chat_data.clear()
     
     consecutive_unanswered = 0
@@ -384,60 +392,87 @@ async def run_quiz_game(context: ContextTypes.DEFAULT_TYPE, group_id: int, quest
             db.end_quiz(group_id)
             return
             
-        # Wait for interval or correct answer
-        answered_correctly = False
+        # Wait for the full interval to collect all replies
         for _ in range(interval_seconds):
-            # Check if quiz is still active (was not cancelled)
+            # Check if quiz is still active
             active = db.get_active_quiz(group_id)
             if not active:
                 return
-                
-            # Check if winner registered in chat_data
-            if context.chat_data.get(f"q_{idx}_winner"):
-                answered_correctly = True
-                break
-                
             await asyncio.sleep(1)
             
-        if answered_correctly:
-            consecutive_unanswered = 0
-            # Short pause before next question
-            await asyncio.sleep(3)
-        else:
-            # Check again just in case a race condition happened in the last second
-            if context.chat_data.get(f"q_{idx}_winner"):
-                consecutive_unanswered = 0
-                await asyncio.sleep(3)
-                continue
-                
+        # Time is up, process all received replies
+        replies = context.chat_data.get(f"q_{idx}_replies", {})
+        correct_responders = []
+        any_correct = False
+        
+        if not replies:
             consecutive_unanswered += 1
-            
-            # Time's up, post correct answer
             time_up_text = (
                 f"⏰ **Vaqt tugadi!**\n\n"
-                f"Hech kim to'g'ri javob bermadi.\n"
+                f"Hech kim javob yozmadi.\n"
                 f"To'g'ri javob: *{q['answer_text']}*"
             )
             try:
                 await context.bot.send_message(chat_id=group_id, text=time_up_text, parse_mode="Markdown", message_thread_id=thread_id)
             except Exception as e:
                 logger.error(f"Error sending time's up: {e}")
-                
-            # If 3 consecutive questions are unanswered, end the game
-            if consecutive_unanswered >= 3:
-                try:
-                    await context.bot.send_message(
-                        chat_id=group_id,
-                        text="⚠️ **Ketma-ket 3 ta savolga hech kim javob bermadi. O'yin to'xtatildi.**",
-                        parse_mode="Markdown",
-                        message_thread_id=thread_id
-                    )
-                except Exception as e:
-                    logger.error(f"Error sending inactivity message: {e}")
-                break
-                
-            await asyncio.sleep(3)
+        else:
+            consecutive_unanswered = 0
             
+            # Grade all replies asynchronously
+            for uid, r_info in replies.items():
+                is_correct = await check_answer_with_ai(
+                    q['question_text'],
+                    q['answer_text'],
+                    r_info['text']
+                )
+                mention = r_info['first_name']
+                if r_info['username']:
+                    mention = f"@{r_info['username']}"
+                    
+                if is_correct:
+                    any_correct = True
+                    correct_responders.append(mention)
+                    db.add_score(group_id, uid, r_info['first_name'], r_info['username'])
+                else:
+                    # Record user's mistake (1-based question number)
+                    user_mistakes = context.chat_data.setdefault(f"user_{uid}_mistakes", [])
+                    user_mistakes.append(idx + 1)
+                    
+            if any_correct:
+                correct_str = ", ".join(correct_responders)
+                result_text = (
+                    f"⏰ **Vaqt tugadi!**\n\n"
+                    f"To'g'ri javob: *{q['answer_text']}*\n\n"
+                    f"✅ **To'g'ri javob berganlar:**\n{correct_str}"
+                )
+            else:
+                result_text = (
+                    f"⏰ **Vaqt tugadi!**\n\n"
+                    f"To'g'ri javob: *{q['answer_text']}*\n\n"
+                    f"❌ Hech kim to'g'ri javob bera olmadi."
+                )
+                
+            try:
+                await context.bot.send_message(chat_id=group_id, text=result_text, parse_mode="Markdown", message_thread_id=thread_id)
+            except Exception as e:
+                logger.error(f"Error sending result: {e}")
+                
+        # If 3 consecutive questions are completely unanswered (0 replies), end the game
+        if consecutive_unanswered >= 3:
+            try:
+                await context.bot.send_message(
+                    chat_id=group_id,
+                    text="⚠️ **Ketma-ket 3 ta savolga hech kim javob yozmadi. O'yin faoliyatsizlik tufayli to'xtatildi.**",
+                    parse_mode="Markdown",
+                    message_thread_id=thread_id
+                )
+            except Exception as e:
+                logger.error(f"Error sending inactivity message: {e}")
+            break
+            
+        await asyncio.sleep(3)
+        
     # Game finished! Generate leaderboard
     scores = db.get_quiz_scores(group_id)
     if scores:
@@ -450,7 +485,14 @@ async def run_quiz_game(context: ContextTypes.DEFAULT_TYPE, group_id: int, quest
             user_mention = s['first_name']
             if s['username']:
                 user_mention = f"@{s['username']}"
-            stats_text += f"{rank}. {user_mention} — **{s['score']} ball**\n"
+                
+            uid = s['user_id']
+            user_mistakes = context.chat_data.get(f"user_{uid}_mistakes", [])
+            if user_mistakes:
+                mistakes_str = ", ".join(f"{m}-savol" for m in user_mistakes)
+                stats_text += f"{rank}. {user_mention} — **{s['score']} ball** (Xatolar: {mistakes_str})\n"
+            else:
+                stats_text += f"{rank}. {user_mention} — **{s['score']} ball** (Xatolar: yo'q)\n"
     else:
         stats_text = (
             f"🏁 **O'yin yakunlandi!**\n\n"
@@ -487,50 +529,19 @@ async def group_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     if message.reply_to_message.message_id != curr_msg_id:
         return
         
-    # Check if this question is already answered correctly
     q_idx = active['current_question_index']
-    if context.chat_data.get(f"q_{q_idx}_winner"):
-        return
-        
+    user = update.effective_user
     user_answer = message.text.strip()
-    topic = active['topic']
-    questions = db.get_questions_by_topic(topic)
     
-    if q_idx >= len(questions):
-        return
-        
-    current_q = questions[q_idx]
-    
-    # Grade the answer using AI Grader
-    is_correct = await check_answer_with_ai(
-        current_q['question_text'],
-        current_q['answer_text'],
-        user_answer
-    )
-    
-    if is_correct:
-        # Check double-entry protection (prevent race conditions)
-        if context.chat_data.get(f"q_{q_idx}_winner"):
-            return
-            
-        user = update.effective_user
-        # Save winner state in local chat context
-        context.chat_data[f"q_{q_idx}_winner"] = {
-            'user_id': user.id,
-            'first_name': user.first_name,
-            'username': user.username
+    # Save user's reply for the current question
+    replies = context.chat_data.setdefault(f"q_{q_idx}_replies", {})
+    if user.id not in replies:
+        replies[user.id] = {
+            "first_name": user.first_name,
+            "username": user.username,
+            "text": user_answer
         }
-        
-        # Add score
-        db.add_score(chat_id, user.id, user.first_name, user.username)
-        
-        # Send confirmation
-        congrats_text = (
-            f"🎉 **To'g'ri javob!**\n\n"
-            f"Ishtirokchi: {user.first_name}\n"
-            f"Qabul qilingan to'g'ri javob: *{current_q['answer_text']}*"
-        )
-        await message.reply_text(congrats_text, parse_mode="Markdown")
+        db.register_participant(chat_id, user.id, user.first_name, user.username)
 
 def build_application():
     # Setup handlers
