@@ -401,20 +401,8 @@ async def run_quiz_game(context: ContextTypes.DEFAULT_TYPE, group_id: int, quest
             
         # Time is up, process all received replies
         replies = context.chat_data.get(f"q_{idx}_replies", {})
-        correct_responders = []
-        any_correct = False
-        
         if not replies:
             consecutive_unanswered += 1
-            time_up_text = (
-                f"⏰ **Vaqt tugadi!**\n\n"
-                f"Hech kim javob yozmadi.\n"
-                f"To'g'ri javob: *{q['answer_text']}*"
-            )
-            try:
-                await context.bot.send_message(chat_id=group_id, text=time_up_text, parse_mode="Markdown", message_thread_id=thread_id)
-            except Exception as e:
-                logger.error(f"Error sending time's up: {e}")
         else:
             consecutive_unanswered = 0
             
@@ -425,37 +413,21 @@ async def run_quiz_game(context: ContextTypes.DEFAULT_TYPE, group_id: int, quest
                     q['answer_text'],
                     r_info['text']
                 )
-                mention = r_info['first_name']
-                if r_info['username']:
-                    mention = f"@{r_info['username']}"
-                    
                 if is_correct:
-                    any_correct = True
-                    correct_responders.append(mention)
                     db.add_score(group_id, uid, r_info['first_name'], r_info['username'])
                 else:
                     # Record user's mistake (1-based question number)
                     user_mistakes = context.chat_data.setdefault(f"user_{uid}_mistakes", [])
                     user_mistakes.append(idx + 1)
                     
-            if any_correct:
-                correct_str = ", ".join(correct_responders)
-                result_text = (
-                    f"⏰ **Vaqt tugadi!**\n\n"
-                    f"To'g'ri javob: *{q['answer_text']}*\n\n"
-                    f"✅ **To'g'ri javob berganlar:**\n{correct_str}"
-                )
-            else:
-                result_text = (
-                    f"⏰ **Vaqt tugadi!**\n\n"
-                    f"To'g'ri javob: *{q['answer_text']}*\n\n"
-                    f"❌ Hech kim to'g'ri javob bera olmadi."
-                )
-                
-            try:
-                await context.bot.send_message(chat_id=group_id, text=result_text, parse_mode="Markdown", message_thread_id=thread_id)
-            except Exception as e:
-                logger.error(f"Error sending result: {e}")
+        time_up_text = (
+            f"⏰ **Vaqt tugadi!**\n\n"
+            f"To'g'ri javob: *{q['answer_text']}*"
+        )
+        try:
+            await context.bot.send_message(chat_id=group_id, text=time_up_text, parse_mode="Markdown", message_thread_id=thread_id)
+        except Exception as e:
+            logger.error(f"Error sending time's up: {e}")
                 
         # If 3 consecutive questions are completely unanswered (0 replies), end the game
         if consecutive_unanswered >= 3:
