@@ -12,9 +12,45 @@ from telegram.ext import (
 )
 from config import QUIZ_BOT_TOKEN as BOT_TOKEN, ADMIN_ID
 import database_quiz as db
-from ai_grader import check_answer_with_ai
+from ai_grader import check_answer_with_ai, parse_questions_from_pdf_text
+import re
+import os
+import pypdf
 
 logger = logging.getLogger(__name__)
+
+def parse_options(question_text):
+    pattern = r'(?:^|\n)\s*([A-Da-d])[\).\-\s]+(.*?)(?=\n\s*[A-Da-d][\).\-\s]+|$)'
+    matches = re.findall(pattern, question_text, re.DOTALL)
+    if len(matches) >= 2:
+        options = []
+        for opt_letter, opt_text in matches:
+            options.append((opt_letter.upper(), opt_text.strip()))
+        return options
+    return None
+
+def get_correct_option_index(correct_answer, options):
+    ans_clean = correct_answer.strip().upper()
+    if len(ans_clean) == 1 and ans_clean in ['A', 'B', 'C', 'D']:
+        for idx, (opt_letter, _) in enumerate(options):
+            if opt_letter == ans_clean:
+                return idx
+                
+    ans_lower = correct_answer.strip().lower()
+    for idx, (opt_letter, opt_text) in enumerate(options):
+        opt_text_lower = opt_text.lower()
+        if ans_lower == opt_text_lower:
+            return idx
+        if ans_lower.startswith(opt_letter.lower()) and len(ans_lower) > 1:
+            clean_ans = re.sub(r'^[A-Da-d][\).\-\s]+', '', ans_lower).strip()
+            if clean_ans == opt_text_lower:
+                return idx
+                
+    for idx, (_, opt_text) in enumerate(options):
+        if opt_text.lower() in ans_lower or ans_lower in opt_text.lower():
+            return idx
+            
+    return 0
 
 # Topics pagination page size
 PAGE_SIZE = 8
@@ -263,7 +299,33 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     user = update.effective_user
     
-    await query.answer()
+    if not data.startswith("qans_"):
+        await query.answer()
+        
+    if data.startswith("qans_"):
+        parts = data.split("_")
+        q_idx = int(parts[1])
+        opt_letter = parts[2]
+        chat_id = query.message.chat_id
+        
+        active = db.get_active_quiz(chat_id)
+        if not active or active['current_question_index'] != q_idx:
+            await query.answer("Bu savolning vaqti tugagan!", show_alert=True)
+            return
+            
+        replies = context.chat_data.setdefault(f"q_{q_idx}_replies", {})
+        if user.id in replies:
+            await query.answer("Siz allaqachon javob bergansiz!", show_alert=True)
+            return
+            
+        replies[user.id] = {
+            "first_name": user.first_name,
+            "username": user.username,
+            "text": opt_letter
+        }
+        db.register_participant(chat_id, user.id, user.first_name, user.username)
+        await query.answer(f"Javobingiz qabul qilindi: {opt_letter}")
+        return
     
     # 1. Admin approve/reject group joins
     if data.startswith("grp_approve_"):
@@ -379,13 +441,35 @@ async def run_quiz_game(context: ContextTypes.DEFAULT_TYPE, group_id: int, quest
             return
             
         # Send question
-        text = (
-            f"📖 **O'yin:** {idx+1}/{len(questions)}-savol\n\n"
-            f"❓ **SAVOL:**\n{q['question_text']}\n\n"
-            f"💬 *Javob berish uchun ushbu xabarga javob (reply) yuboring!*"
-        )
+        options = parse_options(q['question_text'])
+        if options:
+            text = (
+                f"📖 **O'yin:** {idx+1}/{len(questions)}-savol\n\n"
+                f"❓ **SAVOL:**\n{q['question_text']}\n\n"
+                f"👇 **Variantlardan birini tanlang:**"
+            )
+            # Create inline keyboard for options
+            buttons = []
+            row = []
+            for opt_letter, _ in options:
+                row.append(InlineKeyboardButton(opt_letter, callback_data=f"qans_{idx}_{opt_letter}"))
+            buttons.append(row)
+            reply_markup = InlineKeyboardMarkup(buttons)
+        else:
+            text = (
+                f"📖 **O'yin:** {idx+1}/{len(questions)}-savol\n\n"
+                f"❓ **SAVOL:**\n{q['question_text']}\n\n"
+                f"💬 *Javob berish uchun ushbu xabarga javob (reply) yuboring!*"
+            )
+            reply_markup = None
+            
         try:
-            msg = await context.bot.send_message(chat_id=group_id, text=text, message_thread_id=thread_id)
+            msg = await context.bot.send_message(
+                chat_id=group_id,
+                text=text,
+                reply_markup=reply_markup,
+                message_thread_id=thread_id
+            )
             # Save question index and msg id to database
             db.update_quiz_question(group_id, idx, msg.message_id)
             # Record that this question was asked (1-based index)
@@ -412,12 +496,18 @@ async def run_quiz_game(context: ContextTypes.DEFAULT_TYPE, group_id: int, quest
             consecutive_unanswered = 0
             
             # Grade all replies asynchronously
+            options = parse_options(q['question_text'])
             for uid, r_info in replies.items():
-                is_correct = await check_answer_with_ai(
-                    q['question_text'],
-                    q['answer_text'],
-                    r_info['text']
-                )
+                if options:
+                    correct_idx = get_correct_option_index(q['answer_text'], options)
+                    correct_letter = options[correct_idx][0]
+                    is_correct = (r_info['text'].upper() == correct_letter)
+                else:
+                    is_correct = await check_answer_with_ai(
+                        q['question_text'],
+                        q['answer_text'],
+                        r_info['text']
+                    )
                 if is_correct:
                     db.add_score(group_id, uid, r_info['first_name'], r_info['username'])
                     # Record user's correct answer (1-based index)
@@ -520,6 +610,67 @@ async def group_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         }
         db.register_participant(chat_id, user.id, user.first_name, user.username)
 
+# Document upload handler for admin
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.id != ADMIN_ID:
+        return
+        
+    chat = update.effective_chat
+    if chat.type != "private":
+        return
+        
+    doc = update.message.document
+    file_name = doc.file_name.lower()
+    
+    if not file_name.endswith(('.xlsx', '.pdf')):
+        await update.message.reply_text("❌ Faqat Excel (`.xlsx`) yoki PDF (`.pdf`) fayllari qabul qilinadi.")
+        return
+        
+    status_msg = await update.message.reply_text("📥 Fayl yuklab olinmoqda, iltimos kuting...")
+    
+    try:
+        new_file = await context.bot.get_file(doc.file_id)
+        local_path = os.path.join(os.getcwd(), doc.file_name)
+        await new_file.download_to_drive(local_path)
+        
+        await status_msg.edit_text("⚙️ Fayl tahlil qilinmoqda...")
+        
+        if file_name.endswith('.xlsx'):
+            count = db.import_excel_to_db(local_path)
+            if os.path.exists(local_path):
+                os.remove(local_path)
+            if count > 0:
+                await status_msg.edit_text(f"✅ Excel fayli muvaffaqiyatli o'qildi. {count} ta savol bazaga kiritildi!")
+            else:
+                await status_msg.edit_text("❌ Excel faylini o'qishda xatolik yuz berdi yoki unda savollar topilmadi.")
+                
+        elif file_name.endswith('.pdf'):
+            reader = pypdf.PdfReader(local_path)
+            text = ""
+            for page in reader.pages:
+                text += page.extract_text() + "\n"
+                
+            if os.path.exists(local_path):
+                os.remove(local_path)
+                
+            if not text.strip():
+                await status_msg.edit_text("❌ PDF fayl bo'sh yoki undan matn ajratib bo'lmadi.")
+                return
+                
+            await status_msg.edit_text("🧠 Sun'iy intellekt matndan savollarni ajratib olmoqda (bu 1 daqiqagacha vaqt olishi mumkin)...")
+            
+            questions = await parse_questions_from_pdf_text(text)
+            if questions:
+                count = db.insert_questions(questions)
+                await status_msg.edit_text(f"✅ PDF fayli muvaffaqiyatli tahlil qilindi. {count} ta savol bazaga kiritildi!")
+            else:
+                await status_msg.edit_text("❌ Sun'iy intellekt matndan birorta ham savol ajratib ololmadi.")
+                
+    except Exception as e:
+        logger.error(f"Error handling document upload: {e}")
+        await status_msg.edit_text(f"❌ Faylni qayta ishlashda xatolik yuz berdi: {str(e)}")
+
 def build_application():
     # Setup handlers
     app = Application.builder().token(BOT_TOKEN).build()
@@ -534,6 +685,9 @@ def build_application():
     
     # Chat join/leave events
     app.add_handler(ChatMemberHandler(my_chat_member_handler, ChatMemberHandler.MY_CHAT_MEMBER))
+    
+    # Admin file upload handler
+    app.add_handler(MessageHandler(filters.Document.ALL & filters.ChatType.PRIVATE, handle_document))
     
     # Group message replies checking Q&A
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, group_answer_handler))
