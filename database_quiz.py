@@ -279,11 +279,21 @@ def add_score(group_id: int, user_id: int, first_name: str, username: str):
     conn.commit()
     conn.close()
 
+def register_participant(group_id: int, user_id: int, first_name: str, username: str):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT OR IGNORE INTO quiz_scores (group_id, user_id, first_name, username, score)
+        VALUES (?, ?, ?, ?, 0)
+    ''', (group_id, user_id, first_name, username))
+    conn.commit()
+    conn.close()
+
 def get_quiz_scores(group_id: int):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
-        SELECT first_name, username, score 
+        SELECT user_id, first_name, username, score 
         FROM quiz_scores 
         WHERE group_id = ? 
         ORDER BY score DESC, first_name ASC
