@@ -1,7 +1,10 @@
 import asyncio
 import logging
+import json
 from google import genai
 from config import GEMINI_API_KEY
+from pydantic import BaseModel, Field
+from typing import List
 
 logger = logging.getLogger(__name__)
 
@@ -78,3 +81,43 @@ def fallback_comparison(correct_answer: str, user_answer: str) -> bool:
         return True
         
     return False
+
+# Pydantic models for structured question parsing
+class QuestionModel(BaseModel):
+    topic: str = Field(description="Savol mavzusi nomi")
+    question_text: str = Field(description="Savol matni (va variantlar agar bo'lsa)")
+    answer_text: str = Field(description="To'g'ri javob matni yoki variant harfi")
+
+class QuizData(BaseModel):
+    questions: List[QuestionModel]
+
+async def parse_questions_from_pdf_text(text: str) -> list:
+    if not client:
+        raise Exception("Gemini client is not initialized")
+        
+    prompt = """
+    Siz taqdim etilgan matndan adabiyot faniga oid test savollari va ochiq savollarni ajratib oluvchi yordamchisiz.
+    Matn ichidagi barcha savollarni va ularning to'g'ri javoblarini aniqlang va ularni structured JSON shaklida qaytaring.
+    
+    Qoidalar:
+    1. Agar savolda variantlar (A, B, C, D kabi) bo'lsa, barcha variantlarni savol matniga (question_text) qo'shing (har birini yangi qatordan boshlab).
+    2. To'g'ri javob (answer_text) sifatida: variantli testlarda to'g'ri javob harfini ('A', 'B', 'C' yoki 'D') yoki uning to'liq matnini qaytaring. Ochiq savollarda esa to'liq to'g'ri javob matnini yozing.
+    3. Agar mavzu matnda berilmagan bo'lsa, "Umumiy adabiyot" mavzusini ishlating.
+    """
+    
+    # Run the API call in a separate thread to avoid blocking the event loop
+    response = await asyncio.to_thread(
+        client.models.generate_content,
+        model='gemini-2.5-flash',
+        contents=[prompt, text],
+        config=genai.types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=QuizData,
+            temperature=0.1,
+        )
+    )
+    
+    raw_text = response.text.strip()
+    data = json.loads(raw_text)
+    # Return the list of question dicts
+    return data.get("questions", [])
