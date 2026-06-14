@@ -5,7 +5,7 @@ import os
 from telegram import Update, KeyboardButton, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler, ConversationHandler
 
-from config import BOT_TOKEN
+from config import ESSE_BOT_TOKEN as BOT_TOKEN
 import database_esse as db
 import ai_engine
 
