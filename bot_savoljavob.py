@@ -329,11 +329,64 @@ async def cmd_yakunladik(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    message = build_stats_message(session, stats, total, absent)
-    await update.message.reply_text(message, parse_mode=ParseMode.HTML)
+    # Statistika xabarini alohida qismlarga bo'lib yuborish
+    # (Telegram 4096 belgi chegarasidan oshmasligi uchun)
+    try:
+        dur = duration_text(session["started_at"], session["ended_at"])
+        participant_count = len(stats)
 
-    if absent:
-        await update.message.reply_text(OGOHLANTIRISH, parse_mode=ParseMode.HTML)
+        # 1-qism: Asosiy statistika va eng faol ishtirokchilar
+        header_lines = [
+            "📊 <b>Sessiya Statistikasi</b>",
+            f"⏱ Dars davomiyligi: <b>{dur}</b>",
+            "",
+            "🏆 <b>Eng faol ishtirokchilar:</b>",
+        ]
+        for i, row in enumerate(stats):
+            medal = MEDALS[i] if i < len(MEDALS) else f"{i + 1}."
+            name = format_username(row)
+            header_lines.append(f"{medal} {name} — <b>{row['message_count']}</b>")
+        header_lines += [
+            "",
+            f"👥 Jami ishtirokchilar: <b>{participant_count}</b> nafar",
+        ]
+        await update.message.reply_text("\n".join(header_lines), parse_mode=ParseMode.HTML)
+
+        # 2-qism: Qatnashmaganlar (alohida xabar sifatida, zarur bo'lsa bo'lib yuboriladi)
+        if absent:
+            absent_header = f"😶 <b>Darsda ishtirok etmaganlar ({len(absent)} nafar):</b>\n"
+            absent_lines = []
+            for row in absent:
+                name = format_username(row)
+                absent_lines.append(f"• {name}")
+
+            # Qatnashmaganlar ro'yxatini 4000 belgidan oshmaydigan qismlarga bo'lish
+            current_chunk = absent_header
+            for line in absent_lines:
+                if len(current_chunk) + len(line) + 1 > 3900:
+                    await update.message.reply_text(current_chunk, parse_mode=ParseMode.HTML)
+                    current_chunk = ""
+                current_chunk += line + "\n"
+
+            if current_chunk.strip():
+                await update.message.reply_text(current_chunk, parse_mode=ParseMode.HTML)
+
+            # Ogohlantirish
+            await update.message.reply_text(OGOHLANTIRISH, parse_mode=ParseMode.HTML)
+        else:
+            await update.message.reply_text(
+                "📌 <i>Barcha a'zolar darsda qatnashdi! 👏</i>",
+                parse_mode=ParseMode.HTML,
+            )
+
+    except Exception as e:
+        logger.error("Statistika yuborishda xatolik: %s", e)
+        await update.message.reply_text(
+            f"📊 Sessiya yakunlandi.\n"
+            f"👥 Ishtirokchilar: {len(stats)} nafar\n"
+            f"😶 Qatnashmaganlar: {len(absent)} nafar\n\n"
+            f"⚠️ Batafsil statistikani yuborishda xatolik yuz berdi."
+        )
 
 
 async def cmd_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
