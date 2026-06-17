@@ -5,9 +5,10 @@ Guruhda sessiya davomida kim necha marta xabar yuborganini kuzatadi.
 Sessiya tugaganda qatnashganlar va qatnashmaganlar statistikasi chiqariladi.
 
 Buyruqlar:
-  /boshladik  — Admin, sessiyani boshlaydi
-  /yakunladik — Admin, sessiyani to'xtatadi va statistikani chiqaradi
-  /holat      — Admin, joriy holat
+  /boshladik   — Admin, sessiyani boshlaydi
+  /yakunladik  — Admin, sessiyani to'xtatadi va statistikani chiqaradi
+  /holat       — Admin, joriy holat
+  /statistika  — Admin, oxirgi 10 kunlik faollik statistikasi
 """
 
 import logging
@@ -63,9 +64,6 @@ async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
         return member.status in (ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER)
     except Exception as e:
         logger.error("is_admin da xatolik: %s", e)
-        # Agar telegramdan xatolik qaytsa (anonim foydalanuvchi va h.k.), xavfsizlik yuzasidan o'tkazmaymiz
-        # Lekin egasi bo'lsa va is_admin qulasa, return True qilib yuborish xavfli. 
-        # Mayli, False qaytaramiz. Agar u rostan e'tibor bermayotgan bo'lsa logsda ko'rinadi.
         return False
 
 
@@ -338,8 +336,6 @@ async def cmd_yakunladik(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(OGOHLANTIRISH, parse_mode=ParseMode.HTML)
 
 
-
-
 async def cmd_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private" or (ADMIN_ID and update.effective_user.id != ADMIN_ID):
         return
@@ -350,6 +346,7 @@ async def cmd_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"Oxirgi 50 ta loglar:\n\n<pre>{esc(logs)}</pre>", parse_mode=ParseMode.HTML)
     except Exception as e:
         await update.message.reply_text(f"Log o'qishda xatolik: {e}")
+
 
 async def cmd_guruhlar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
@@ -453,6 +450,75 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def cmd_statistika(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Oxirgi 10 kundagi a'zolar faollik statistikasi."""
+    if not await check_approval(update, context):
+        return
+
+    chat = update.effective_chat
+
+    if chat.type not in ("group", "supergroup"):
+        await update.message.reply_text("❗ Bu buyruq faqat guruhlarda ishlaydi.")
+        return
+
+    if not await is_admin(update, context):
+        await update.message.reply_text("❌ Faqat guruh adminlari statistikani ko'ra oladi.")
+        return
+
+    data = await asyncio.to_thread(db.get_member_stats_last_n_days, chat.id, 10)
+
+    if data['total_sessions'] == 0:
+        await update.message.reply_text(
+            "📊 Oxirgi 10 kun ichida hech qanday yakunlangan sessiya topilmadi."
+        )
+        return
+
+    total = data['total_sessions']
+    members = data['members']
+
+    active = []
+    inactive = []
+    for m in members:
+        attended = m['sessions_attended']
+        pct = round(attended / total * 100)
+        entry = {**m, 'pct': pct}
+        if pct >= 50:
+            active.append(entry)
+        else:
+            inactive.append(entry)
+
+    lines = [
+        f"📊 <b>Oxirgi 10 kunlik statistika</b>",
+        f"📅 Jami yakunlangan sessiyalar: <b>{total}</b> ta",
+        "",
+    ]
+
+    if active:
+        lines.append(f"✅ <b>Faol a'zolar ({len(active)} nafar):</b>")
+        for i, m in enumerate(active, 1):
+            name = format_username(m)
+            lines.append(f"{i}. {name} — <b>{m['sessions_attended']}/{total}</b> sessiya ({m['pct']}%)")
+        lines.append("")
+
+    if inactive:
+        lines.append(f"⚠️ <b>Nofaol a'zolar ({len(inactive)} nafar):</b>")
+        for i, m in enumerate(inactive, 1):
+            name = format_username(m)
+            lines.append(f"{i}. {name} — <b>{m['sessions_attended']}/{total}</b> sessiya ({m['pct']}%)")
+
+    message = "\n".join(lines)
+
+    # Telegram 4096 belgi chegarasi uchun himoya
+    if len(message) > 4000:
+        mid = len(lines) // 2
+        part1 = "\n".join(lines[:mid])
+        part2 = "\n".join(lines[mid:])
+        await update.message.reply_text(part1, parse_mode=ParseMode.HTML)
+        await update.message.reply_text(part2, parse_mode=ParseMode.HTML)
+    else:
+        await update.message.reply_text(message, parse_mode=ParseMode.HTML)
+
+
 # -----------------------------------------------------------------
 # Asosiy funksiya
 # -----------------------------------------------------------------
@@ -464,6 +530,7 @@ def build_application():
     app.add_handler(CommandHandler("yakunladik", cmd_yakunladik))
     app.add_handler(CommandHandler("holat", cmd_holat))
     app.add_handler(CommandHandler("guruhlar", cmd_guruhlar))
+    app.add_handler(CommandHandler("statistika", cmd_statistika))
     app.add_handler(CommandHandler("logs", cmd_logs))
     app.add_handler(CallbackQueryHandler(admin_button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
