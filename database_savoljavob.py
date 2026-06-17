@@ -96,7 +96,10 @@ def request_group_approval(chat_id: int, group_name: str):
             cursor.execute("""
                 INSERT INTO approved_groups (chat_id, group_name, status, requested_at)
                 VALUES (%s, %s, 'pending', %s)
-                ON CONFLICT(chat_id) DO NOTHING
+                ON CONFLICT(chat_id) DO UPDATE SET
+                    status = 'pending',
+                    group_name = EXCLUDED.group_name,
+                    requested_at = EXCLUDED.requested_at
             """, (chat_id, group_name, datetime.now().isoformat()))
         conn.commit()
 
@@ -251,3 +254,64 @@ def get_approved_groups() -> list[dict]:
             cursor.execute("SELECT chat_id, group_name FROM approved_groups WHERE status = 'approved'")
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
+
+
+def get_member_stats_last_n_days(chat_id: int, days: int = 10) -> dict:
+    """
+    Oxirgi N kun ichidagi sessiyalar va har bir a'zoning qatnashish statistikasini qaytaradi.
+    Returns: {
+        'total_sessions': int,
+        'members': [{'user_id', 'username', 'first_name', 'last_name', 'sessions_attended', 'total_sessions'}]
+    }
+    """
+    with get_db() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
+            # Oxirgi N kundagi tugallangan sessiyalarni topish
+            cursor.execute("""
+                SELECT id, started_at, ended_at
+                FROM sessions
+                WHERE chat_id = %s
+                  AND is_active = 0
+                  AND started_at >= (NOW() - INTERVAL '%s days')::text
+                ORDER BY started_at DESC
+            """, (chat_id, days))
+            sessions = cursor.fetchall()
+            total_sessions = len(sessions)
+
+            if total_sessions == 0:
+                return {'total_sessions': 0, 'members': []}
+
+            session_ids = [s['id'] for s in sessions]
+
+            # Har bir a'zo uchun nechta sessiyada qatnashganini hisoblash
+            cursor.execute("""
+                SELECT
+                    gm.user_id,
+                    gm.username,
+                    gm.first_name,
+                    gm.last_name,
+                    COUNT(DISTINCT m.session_id) AS sessions_attended
+                FROM group_members gm
+                LEFT JOIN messages m
+                    ON m.user_id = gm.user_id
+                    AND m.chat_id = gm.chat_id
+                    AND m.session_id = ANY(%s)
+                WHERE gm.chat_id = %s
+                GROUP BY gm.user_id, gm.username, gm.first_name, gm.last_name
+                ORDER BY sessions_attended DESC, gm.first_name
+            """, (session_ids, chat_id))
+            members = cursor.fetchall()
+
+            result_members = []
+            for m in members:
+                result_members.append({
+                    'user_id': m['user_id'],
+                    'username': m['username'],
+                    'first_name': m['first_name'],
+                    'last_name': m['last_name'],
+                    'sessions_attended': m['sessions_attended'],
+                    'total_sessions': total_sessions,
+                })
+
+            return {'total_sessions': total_sessions, 'members': result_members}
+
