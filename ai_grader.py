@@ -34,22 +34,29 @@ Ishtirokchining javobini to'g'ri javob bilan solishtiring.
 
 Faqat bitta so'z yozing: "HA" yoki "YO'Q". Har qanday izoh, tushuntirish va qo'shimcha so'zlardan tiyiling.
 """
-    try:
-        # Run the API call in a separate thread to avoid blocking the event loop
-        response = await asyncio.to_thread(
+    async def _call_api(model_name):
+        return await asyncio.to_thread(
             client.models.generate_content,
-            model='gemini-2.5-flash',
+            model=model_name,
             contents=prompt
         )
-        
-        result = response.text.strip().upper()
-        # Clean result of any extra symbols or spaces
-        if "HA" in result:
-            return True
-        return False
+
+    try:
+        # Run the API call in a separate thread to avoid blocking the event loop
+        response = await _call_api('gemini-2.5-flash')
     except Exception as e:
-        logger.error(f"Gemini API error: {e}")
-        return fallback_comparison(correct_answer, user_answer)
+        logger.warning(f"gemini-2.5-flash failed in check_answer_with_ai: {e}. Trying gemini-2.5-flash-lite...")
+        try:
+            response = await _call_api('gemini-2.5-flash-lite')
+        except Exception as ex:
+            logger.error(f"Gemini API fallback error: {ex}")
+            return fallback_comparison(correct_answer, user_answer)
+        
+    result = response.text.strip().upper()
+    # Clean result of any extra symbols or spaces
+    if "HA" in result:
+        return True
+    return False
 
 def fallback_comparison(correct_answer: str, user_answer: str) -> bool:
     # Naive fallback: remove punctuation and check if key parts match
@@ -105,17 +112,24 @@ async def parse_questions_from_pdf_text(text: str) -> list:
     3. Agar mavzu matnda berilmagan bo'lsa, "Umumiy adabiyot" mavzusini ishlating.
     """
     
-    # Run the API call in a separate thread to avoid blocking the event loop
-    response = await asyncio.to_thread(
-        client.models.generate_content,
-        model='gemini-2.5-flash',
-        contents=[prompt, text],
-        config=genai.types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=QuizData,
-            temperature=0.1,
+    async def _call_api(model_name):
+        return await asyncio.to_thread(
+            client.models.generate_content,
+            model=model_name,
+            contents=[prompt, text],
+            config=genai.types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=QuizData,
+                temperature=0.1,
+            )
         )
-    )
+
+    try:
+        # Run the API call in a separate thread to avoid blocking the event loop
+        response = await _call_api('gemini-2.5-flash')
+    except Exception as e:
+        logger.warning(f"gemini-2.5-flash failed in parse_questions_from_pdf_text: {e}. Trying gemini-2.5-flash-lite...")
+        response = await _call_api('gemini-2.5-flash-lite')
     
     raw_text = response.text.strip()
     data = json.loads(raw_text)
