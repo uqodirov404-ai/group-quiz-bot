@@ -223,10 +223,10 @@ async def upload_essay(
                         content = await file.read()
                         await out_file.write(content)
                     
-                    result = await check_essay_image(file_location, criteria, topic)
+                    result = await check_essay_image([file_location])
                     os.remove(file_location)
                 elif text:
-                    result = await check_essay_text(text, criteria, topic)
+                    result = await check_essay_text(topic, text, criteria)
                 else:
                     result = "⚠️ Iltimos, esse matnini yozing yoki rasm yuklang!"
             except Exception as e:
