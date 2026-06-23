@@ -65,9 +65,9 @@ async def check_essay_text(topic: str, essay: str, criteria: str) -> str:
         
     prompt = f"Mavzu: {topic}\n\nEsse matni:\n{essay}\n\nIltimos, ushbu esseni yuqoridagi mezonlarga asosan tekshiring."
     
-    def _generate():
+    def _generate(model_name):
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model=model_name,
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_INSTRUCTION,
@@ -77,10 +77,15 @@ async def check_essay_text(topic: str, essay: str, criteria: str) -> str:
         return response.text
 
     try:
-        result = await asyncio.to_thread(_generate)
+        result = await asyncio.to_thread(_generate, 'gemini-2.5-flash')
         return result
     except Exception as e:
-        return f"⚠️ Tahlil qilishda xatolik yuz berdi: {e}"
+        print(f"gemini-2.5-flash failed: {e}. Trying gemini-2.5-flash-lite fallback...")
+        try:
+            result = await asyncio.to_thread(_generate, 'gemini-2.5-flash-lite')
+            return result
+        except Exception as ex:
+            return f"⚠️ Tahlil qilishda xatolik yuz berdi: {ex}"
 
 async def check_essay_image(image_paths: list) -> str:
     if not client:
@@ -88,10 +93,10 @@ async def check_essay_image(image_paths: list) -> str:
         
     prompt = "Iltimos, ushbu rasmlardagi qo'lyozma esseni o'qing va uni Milliy Sertifikat mezonlari asosida tekshiring. Avval o'qigan matningizni 'O'qilgan matn' deb yozing, so'ngra to'liq tahlil va bahoni bering."
     
-    def _generate():
+    def _generate(model_name):
         imgs = [Image.open(p) for p in image_paths]
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model=model_name,
             contents=imgs + [prompt],
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_INSTRUCTION,
@@ -101,7 +106,12 @@ async def check_essay_image(image_paths: list) -> str:
         return response.text
 
     try:
-        result = await asyncio.to_thread(_generate)
+        result = await asyncio.to_thread(_generate, 'gemini-2.5-flash')
         return result
     except Exception as e:
-        return f"⚠️ Rasmni tahlil qilishda xatolik yuz berdi: {e}"
+        print(f"gemini-2.5-flash image check failed: {e}. Trying gemini-2.5-flash-lite fallback...")
+        try:
+            result = await asyncio.to_thread(_generate, 'gemini-2.5-flash-lite')
+            return result
+        except Exception as ex:
+            return f"⚠️ Rasmni tahlil qilishda xatolik yuz berdi: {ex}"
