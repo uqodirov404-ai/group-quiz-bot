@@ -58,6 +58,8 @@ def get_done_keyboard():
     return ReplyKeyboardMarkup([[KeyboardButton("✅ Tayyor"), KeyboardButton("🔙 Bekor qilish")]], resize_keyboard=True)
 
 async def check_sub(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    if not update.effective_user:
+        return True
     user_id = update.effective_user.id
     channels = db.get_channels()
     if not channels: return True
