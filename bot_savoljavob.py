@@ -625,6 +625,12 @@ async def cmd_statistika(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     active = []
     inactive = []
+    g100 = 0
+    g80_99 = 0
+    g50_79 = 0
+    g1_49 = 0
+    g0 = 0
+
     for m in members:
         attended = m['sessions_attended']
         pct = round(attended / total * 100)
@@ -633,10 +639,21 @@ async def cmd_statistika(update: Update, context: ContextTypes.DEFAULT_TYPE):
             active.append(entry)
         else:
             inactive.append(entry)
+            
+        if pct == 100:
+            g100 += 1
+        elif pct >= 80:
+            g80_99 += 1
+        elif pct >= 50:
+            g50_79 += 1
+        elif pct >= 1:
+            g1_49 += 1
+        else:
+            g0 += 1
 
     lines = [
         f"📊 <b>Oxirgi 10 kunlik statistika</b>",
-        f"📅 Jami yakunlangan sessiyalar: <b>{total}</b> ta",
+        f"📅 Jami yakunlangan darslar: <b>{total}</b> ta",
         "",
     ]
 
@@ -644,14 +661,27 @@ async def cmd_statistika(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append(f"✅ <b>Faol a'zolar ({len(active)} nafar):</b>")
         for i, m in enumerate(active, 1):
             name = format_username(m)
-            lines.append(f"{i}. {name} — <b>{m['sessions_attended']}/{total}</b> sessiya ({m['pct']}%)")
+            lines.append(f"{i}. {name} — <b>{m['sessions_attended']}/{total}</b> dars ({m['pct']}%)")
         lines.append("")
 
     if inactive:
         lines.append(f"⚠️ <b>Nofaol a'zolar ({len(inactive)} nafar):</b>")
         for i, m in enumerate(inactive, 1):
             name = format_username(m)
-            lines.append(f"{i}. {name} — <b>{m['sessions_attended']}/{total}</b> sessiya ({m['pct']}%)")
+            lines.append(f"{i}. {name} — <b>{m['sessions_attended']}/{total}</b> dars ({m['pct']}%)")
+
+    # Umumiy ishtirok hisoboti
+    lines.append("")
+    lines.append("📈 <b>Umumiy ishtirok hisoboti:</b>")
+    lines.append(f"📅 Jami o'tilgan jonli darslar: <b>{total}</b> ta")
+    lines.append(f"👥 Jami o'quvchilar: <b>{len(members)}</b> nafar")
+    lines.append("")
+    lines.append("📊 <b>Ishtirok foizlari bo'yicha o'quvchilar soni:</b>")
+    lines.append(f"• 100% qatnashganlar: <b>{g100}</b> nafar")
+    lines.append(f"• 80-99% qatnashganlar: <b>{g80_99}</b> nafar")
+    lines.append(f"• 50-79% qatnashganlar: <b>{g50_79}</b> nafar")
+    lines.append(f"• 1-49% qatnashganlar: <b>{g1_49}</b> nafar")
+    lines.append(f"• 0% qatnashganlar: <b>{g0}</b> nafar")
 
     message = "\n".join(lines)
 
