@@ -113,6 +113,19 @@ def init_db():
                     UNIQUE(chat_id, user_id)
                 )
             """)
+
+            # Faollik tekshiruvi jadvali
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS active_checks (
+                    id SERIAL PRIMARY KEY,
+                    session_id INTEGER NOT NULL REFERENCES sessions(id),
+                    user_id BIGINT NOT NULL,
+                    username TEXT,
+                    first_name TEXT,
+                    checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(session_id, user_id)
+                )
+            """)
         conn.commit()
 
 
@@ -350,4 +363,25 @@ def get_member_stats_last_n_days(chat_id: int, days: int = 10) -> dict:
                 })
 
             return {'total_sessions': total_sessions, 'members': result_members}
+
+
+def record_active_check(session_id: int, user_id: int, username: str, first_name: str):
+    """Foydalanuvchi faollik tekshiruvidan muvaffaqiyatli o'tganligini yozib qo'yadi."""
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                INSERT INTO active_checks (session_id, user_id, username, first_name)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT(session_id, user_id) DO NOTHING
+            """, (session_id, user_id, username, first_name))
+        conn.commit()
+
+
+def get_active_checked_users(session_id: int) -> set[int]:
+    """Sessiya davomida faolligini tasdiqlagan barcha foydalanuvchilar ID to'plamini qaytaradi."""
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT user_id FROM active_checks WHERE session_id = %s", (session_id,))
+            rows = cursor.fetchall()
+            return {row[0] for row in rows}
 
