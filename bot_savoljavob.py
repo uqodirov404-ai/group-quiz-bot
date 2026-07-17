@@ -127,17 +127,43 @@ async def check_approval(update: Update, context: ContextTypes.DEFAULT_TYPE, sil
     return False
 
 
-async def admin_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admindan kelgan tugma (Inline Keyboard) bosilishini boshqaradi."""
+async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Inline Keyboard tugmalari bosilishini boshqaradi."""
     query = update.callback_query
     user = query.from_user
+    data = query.data
+
+    if data.startswith("act_check_"):
+        parts = data.split("_")
+        session_id = int(parts[2])
+        timestamp = int(parts[3])
+        
+        import time
+        elapsed = time.time() - timestamp
+        if elapsed > 4 * 60:
+            await query.answer("⌛ Vaqt tugadi! Faollikni tasdiqlash uchun 4 daqiqa berilgan edi.", show_alert=True)
+            return
+
+        active_sess = await asyncio.to_thread(db.get_active_session, query.message.chat_id)
+        if not active_sess or active_sess["id"] != session_id:
+            await query.answer("⚠️ Dars allaqachon yakunlangan!", show_alert=True)
+            return
+
+        await asyncio.to_thread(
+            db.record_active_check,
+            session_id=session_id,
+            user_id=user.id,
+            username=user.username,
+            first_name=user.first_name
+        )
+        await query.answer("✅ Faolligingiz tasdiqlandi!", show_alert=True)
+        return
 
     if ADMIN_ID and user.id != ADMIN_ID:
         await query.answer("Sizda bunga huquq yo'q!", show_alert=True)
         return
 
     await query.answer()
-    data = query.data
 
     if data.startswith("approve_"):
         chat_id = int(data.split("_")[1])
@@ -260,6 +286,59 @@ def build_stats_message(session: dict, stats: list[dict],
 # Handler-lar
 # -----------------------------------------------------------------
 
+async def auto_attention_check(context: ContextTypes.DEFAULT_TYPE):
+    job = context.job
+    chat_id = job.chat_id
+    session_id = job.data["session_id"]
+    
+    import time
+    now_ts = int(time.time())
+    
+    keyboard = [
+        [
+            InlineKeyboardButton("🙋‍♂️ Shu yerdaman", callback_data=f"act_check_{session_id}_{now_ts}")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    try:
+        msg = await context.bot.send_message(
+            chat_id=chat_id,
+            text="<b>🔔 FAOLLIK TEKSHIRUVI!</b>\n\n"
+                 "Hurmatli o'quvchilar, darsdamisiz? "
+                 "Iltimos, <b>4 daqiqa</b> ichida quyidagi tugmani bosib, faolligingizni tasdiqlang!",
+            parse_mode=ParseMode.HTML,
+            reply_markup=reply_markup
+        )
+        
+        # Schedule message close job after 4 minutes (240 seconds)
+        context.job_queue.run_once(
+            callback=close_attention_check,
+            when=4 * 60,
+            chat_id=chat_id,
+            data={"message_id": msg.message_id, "session_id": session_id}
+        )
+    except Exception as e:
+        logger.error("auto_attention_check yuborishda xatolik: %s", e)
+
+
+async def close_attention_check(context: ContextTypes.DEFAULT_TYPE):
+    job = context.job
+    chat_id = job.chat_id
+    message_id = job.data["message_id"]
+    try:
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text="<b>🔔 FAOLLIK TEKSHIRUVI YAKUNLANDI</b>\n\n"
+                 "Vaqt tugadi (4 daqiqa o'tdi).",
+            parse_mode=ParseMode.HTML,
+            reply_markup=None
+        )
+    except Exception as e:
+        logger.error("close_attention_check da xatolik: %s", e)
+
+
 async def cmd_boshladik(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_approval(update, context):
         return
@@ -272,23 +351,33 @@ async def cmd_boshladik(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not await is_admin(update, context):
-        await update.message.reply_text("❌ Faqat guruh adminlari sessiyani boshlay oladi.")
+        await update.message.reply_text("❌ Faqat guruh adminlari darsni boshlay oladi.")
         return
 
     existing = await asyncio.to_thread(db.get_active_session, chat.id)
     if existing:
         await update.message.reply_text(
-            "⚠️ Sessiya allaqachon boshlangan!\n"
+            "⚠️ Dars allaqachon boshlangan!\n"
             "To'xtatish uchun /yakunladik deb yozing."
         )
         return
 
-    await asyncio.to_thread(db.start_session, chat.id)
-    logger.info("Sessiya boshlandi: chat_id=%s, admin=%s", chat.id, user.id)
+    session_id = await asyncio.to_thread(db.start_session, chat.id)
+    logger.info("Dars boshlandi: chat_id=%s, admin=%s, session_id=%s", chat.id, user.id, session_id)
+
+    # Avtomatik faollik tekshiruvi (har 15 daqiqada - 900 soniya)
+    context.job_queue.run_repeating(
+        callback=auto_attention_check,
+        interval=15 * 60,
+        first=15 * 60,
+        chat_id=chat.id,
+        name=f"check_{chat.id}",
+        data={"session_id": session_id}
+    )
 
     await update.message.reply_text(
-        "✅ <b>Sessiya boshlandi!</b>\n\n"
-        "Endi barcha xabarlar hisoblanadi.\n"
+        "✅ <b>Dars boshlandi!</b>\n\n"
+        "Yo`qlama uchun + belgisini qoldiring.\n"
         "To'xtatish uchun /yakunladik deb yozing.",
         parse_mode=ParseMode.HTML,
     )
@@ -306,38 +395,42 @@ async def cmd_yakunladik(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not await is_admin(update, context):
-        await update.message.reply_text("❌ Faqat guruh adminlari sessiyani yakunlay oladi.")
+        await update.message.reply_text("❌ Faqat guruh adminlari darsni yakunlay oladi.")
         return
 
     session = await asyncio.to_thread(db.end_session, chat.id)
     if not session:
         await update.message.reply_text(
-            "⚠️ Hozir aktiv sessiya yo'q.\n"
+            "⚠️ Hozir aktiv dars yo'q.\n"
             "Boshlash uchun /boshladik deb yozing."
         )
         return
 
-    logger.info("Sessiya yakunlandi: chat_id=%s, session_id=%s", chat.id, session["id"])
+    # Faollik tekshiruvi joblarini bekor qilish
+    jobs = context.job_queue.get_jobs_by_name(f"check_{chat.id}")
+    for job in jobs:
+        job.schedule_removal()
+
+    logger.info("Dars yakunlandi: chat_id=%s, session_id=%s", chat.id, session["id"])
 
     stats = await asyncio.to_thread(db.get_session_stats, session["id"])
     total = await asyncio.to_thread(db.get_session_total_messages, session["id"])
     absent = await asyncio.to_thread(db.get_absent_members, chat.id, session["id"])
+    checked_user_ids = await asyncio.to_thread(db.get_active_checked_users, session["id"])
 
     if not stats:
         await update.message.reply_text(
-            "📊 Sessiya yakunlandi, lekin hech kim xabar yozmadi."
+            "📊 Dars yakunlandi, lekin hech kim xabar yozmadi."
         )
         return
 
-    # Statistika xabarini alohida qismlarga bo'lib yuborish
-    # (Telegram 4096 belgi chegarasidan oshmasligi uchun)
     try:
         dur = duration_text(session["started_at"], session["ended_at"])
         participant_count = len(stats)
 
-        # 1-qism: Asosiy statistika va eng faol ishtirokchilar
+        # 1-qism: Asosiy dars statistikasi va eng faol ishtirokchilar
         header_lines = [
-            "📊 <b>Sessiya Statistikasi</b>",
+            "📊 <b>Dars statistikasi</b>",
             f"⏱ Dars davomiyligi: <b>{dur}</b>",
             "",
             "🏆 <b>Eng faol ishtirokchilar:</b>",
@@ -345,22 +438,23 @@ async def cmd_yakunladik(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for i, row in enumerate(stats):
             medal = MEDALS[i] if i < len(MEDALS) else f"{i + 1}."
             name = format_username(row)
-            header_lines.append(f"{medal} {name} — <b>{row['message_count']}</b>")
+            status_symbol = "🙋‍♂️" if row["user_id"] in checked_user_ids else "❌"
+            header_lines.append(f"{medal} {name} — <b>{row['message_count']}</b> [{status_symbol}]")
         header_lines += [
             "",
             f"👥 Jami ishtirokchilar: <b>{participant_count}</b> nafar",
         ]
         await update.message.reply_text("\n".join(header_lines), parse_mode=ParseMode.HTML)
 
-        # 2-qism: Qatnashmaganlar (alohida xabar sifatida, zarur bo'lsa bo'lib yuboriladi)
+        # 2-qism: Qatnashmaganlar
         if absent:
             absent_header = f"😶 <b>Darsda ishtirok etmaganlar ({len(absent)} nafar):</b>\n"
             absent_lines = []
             for row in absent:
                 name = format_username(row)
-                absent_lines.append(f"• {name}")
+                status_symbol = "🙋‍♂️" if row["user_id"] in checked_user_ids else "❌"
+                absent_lines.append(f"• {name} [{status_symbol}]")
 
-            # Qatnashmaganlar ro'yxatini 4000 belgidan oshmaydigan qismlarga bo'lish
             current_chunk = absent_header
             for line in absent_lines:
                 if len(current_chunk) + len(line) + 1 > 3900:
@@ -382,7 +476,7 @@ async def cmd_yakunladik(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error("Statistika yuborishda xatolik: %s", e)
         await update.message.reply_text(
-            f"📊 Sessiya yakunlandi.\n"
+            f"📊 Dars yakunlandi.\n"
             f"👥 Ishtirokchilar: {len(stats)} nafar\n"
             f"😶 Qatnashmaganlar: {len(absent)} nafar\n\n"
             f"⚠️ Batafsil statistikani yuborishda xatolik yuz berdi."
@@ -585,7 +679,7 @@ def build_application():
     app.add_handler(CommandHandler("guruhlar", cmd_guruhlar))
     app.add_handler(CommandHandler("statistika", cmd_statistika))
     app.add_handler(CommandHandler("logs", cmd_logs))
-    app.add_handler(CallbackQueryHandler(admin_button_handler))
+    app.add_handler(CallbackQueryHandler(callback_query_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
     
     return app
