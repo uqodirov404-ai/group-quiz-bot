@@ -290,6 +290,7 @@ async def auto_attention_check(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
     chat_id = job.chat_id
     session_id = job.data["session_id"]
+    message_thread_id = job.data.get("message_thread_id")
     
     import time
     now_ts = int(time.time())
@@ -304,6 +305,7 @@ async def auto_attention_check(context: ContextTypes.DEFAULT_TYPE):
     try:
         msg = await context.bot.send_message(
             chat_id=chat_id,
+            message_thread_id=message_thread_id,
             text="<b>🔔 FAOLLIK TEKSHIRUVI!</b>\n\n"
                  "Hurmatli o'quvchilar, darsdamisiz? "
                  "Iltimos, <b>4 daqiqa</b> ichida quyidagi tugmani bosib, faolligingizni tasdiqlang!",
@@ -365,6 +367,8 @@ async def cmd_boshladik(update: Update, context: ContextTypes.DEFAULT_TYPE):
     session_id = await asyncio.to_thread(db.start_session, chat.id)
     logger.info("Dars boshlandi: chat_id=%s, admin=%s, session_id=%s", chat.id, user.id, session_id)
 
+    message_thread_id = update.message.message_thread_id if update.message else None
+
     # Avtomatik faollik tekshiruvi (har 15 daqiqada - 900 soniya)
     context.job_queue.run_repeating(
         callback=auto_attention_check,
@@ -372,7 +376,7 @@ async def cmd_boshladik(update: Update, context: ContextTypes.DEFAULT_TYPE):
         first=15 * 60,
         chat_id=chat.id,
         name=f"check_{chat.id}",
-        data={"session_id": session_id}
+        data={"session_id": session_id, "message_thread_id": message_thread_id}
     )
 
     await update.message.reply_text(
